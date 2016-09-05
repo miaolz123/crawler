@@ -14,6 +14,8 @@ import (
 var (
 	// DefaultMethod is "GET"
 	DefaultMethod = "GET"
+	// DefaultTimeout is 30s
+	DefaultTimeout = 30 * time.Second
 )
 
 func defaultStorerWork(storers map[string][]interface{}) map[string]bool {
@@ -53,6 +55,7 @@ type Option struct {
 // Rule is a rule for Crawler
 type Rule struct {
 	name          string
+	Timeout       time.Duration
 	BeforeRequest func(*http.Request)
 	Parse         func(*Context) bool
 }
@@ -68,6 +71,7 @@ type Queue struct {
 // Context is a context for request and response
 type Context struct {
 	Crawler  *Crawler
+	client   http.Client
 	Request  *http.Request
 	Response *http.Response
 	Document *goquery.Document
@@ -120,6 +124,9 @@ func (c *Crawler) AddQueue(queue Queue) {
 func (c *Crawler) AddRule(name string, rule Rule) {
 	name = strings.ToLower(name)
 	rule.name = name
+	if rule.Timeout == 0 {
+		rule.Timeout = DefaultTimeout
+	}
 	c.rules[name] = rule
 }
 
@@ -152,7 +159,7 @@ func (c *Crawler) loopRequest() {
 			if !ok {
 				log.Printf("Crawle[%v] Run() error: rules[%v] is not defined", c.option.Name, q.Rule)
 			}
-			ctx := &Context{Crawler: c, Param: q.Param}
+			ctx := &Context{Crawler: c, client: http.Client{Timeout: r.Timeout}, Param: q.Param}
 			err := r.do(ctx, q)
 			if err != nil {
 				log.Printf("Crawle[%v] HTTP error: %v", c.option.Name, err)

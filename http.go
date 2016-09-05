@@ -22,18 +22,17 @@ var userAgents = []string{
 }
 
 func (r Rule) do(ctx *Context, q Queue) (err error) {
-	client := http.Client{}
 	ctx.Request, err = http.NewRequest(strings.ToUpper(q.Method), q.URL, bytes.NewReader([]byte{}))
 	if err != nil {
 		return
 	}
 	ctx.Request.Header.Set("User-Agent", userAgents[randIn(len(userAgents))])
-	ctx.Response, err = client.Do(ctx.Request)
+	ctx.Response, err = ctx.client.Do(ctx.Request)
 	return
 }
 
 // FileDownload can save a file to dist
-func FileDownload(fileURL, distPath string) (err error) {
+func FileDownload(fileURL, distPath string) (filePath string, err error) {
 	client := http.Client{}
 	req, err := http.NewRequest("GET", fileURL, bytes.NewReader([]byte{}))
 	if err != nil {
@@ -49,7 +48,8 @@ func FileDownload(fileURL, distPath string) (err error) {
 	if err = os.MkdirAll(distPath, os.ModePerm); err != nil {
 		return
 	}
-	f, err := os.OpenFile(getUniqueName(distPath+fileName), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm)
+	filePath = getUniqueName(distPath + fileName)
+	f, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm)
 	if err != nil {
 		return
 	}
