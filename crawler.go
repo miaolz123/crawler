@@ -31,25 +31,27 @@ func defaultStorerWork(storers map[string][]interface{}) map[string]bool {
 
 // Crawler is just a crawler
 type Crawler struct {
-	sync.RWMutex
+	status      int
 	option      Option
 	rules       map[string]Rule
 	queues      arraylist.List
-	queuesTemp  []interface{}
+	queuesTemp  arraylist.List
 	queuesLock  bool
 	storers     map[string][]interface{}
 	storersTemp map[string][]interface{}
 	storersLock bool
+	sync.RWMutex
 }
 
 // Option is an option of Crawler
 type Option struct {
-	Name          string
-	LogDisable    bool
-	PauseTime     []int
-	pauseTimeDif  int
-	DefaultMethod string
-	StorerWork    func(map[string][]interface{}) map[string]bool
+	Name            string
+	LogDisable      bool
+	AutoStopDisable bool
+	PauseTime       []int
+	pauseTimeDif    int
+	DefaultMethod   string
+	StorerWork      func(map[string][]interface{}) map[string]bool
 }
 
 // Rule is a rule for Crawler
@@ -114,7 +116,7 @@ func (c *Crawler) AddQueue(queue Queue) {
 		queue.Rule = strings.ToLower(queue.Rule)
 	}
 	if c.queuesLock {
-		c.queuesTemp = append(c.queuesTemp, queue)
+		c.queuesTemp.Add(queue)
 	} else {
 		c.queues.Add(queue)
 	}
@@ -143,17 +145,46 @@ func (c *Crawler) AddDataToStorer(name string, data interface{}) {
 
 // Run is an init function of Crawler
 func (c *Crawler) Run() {
-	go c.loopRequest()
-	go c.loopStorer()
-	for {
-		time.Sleep(30 * time.Second)
+	c.status = 1
+	if !c.option.AutoStopDisable {
+		c.Stop()
 	}
+	go c.loopRequest()
+	c.loopStorer()
+}
+
+// Stop is a stop function of Crawler
+func (c *Crawler) Stop() {
+	go func() {
+		t := time.Tick(5 * time.Second)
+		for range t {
+			queuesSize := c.queues.Size() + c.queuesTemp.Size()
+			storersSize := 0
+			for _, s := range c.storers {
+				storersSize += len(s)
+			}
+			for _, s := range c.storersTemp {
+				storersSize += len(s)
+			}
+			if queuesSize+storersSize == 0 {
+				c.status = -1
+			}
+		}
+	}()
 }
 
 func (c *Crawler) loopRequest() {
 	for {
-		c.queuesLock = true
-		c.queues.Each(func(i int, v interface{}) {
+		if c.status < 0 {
+			break
+		} else if c.status == 0 {
+			continue
+		}
+		queues := c.queuesTemp
+		if c.queuesLock = !c.queuesLock; c.queuesLock {
+			queues = c.queues
+		}
+		queues.Each(func(i int, v interface{}) {
 			q := v.(Queue)
 			r, ok := c.rules[q.Rule]
 			if !ok {
@@ -166,36 +197,45 @@ func (c *Crawler) loopRequest() {
 			} else if ctx.Document, err = goquery.NewDocumentFromResponse(ctx.Response); err != nil {
 				log.Printf("Crawle[%v] HTTP to Document error: %v", c.option.Name, err)
 			} else if r.Parse == nil || r.Parse(ctx) {
-				c.queues.Remove(i)
+				queues.Remove(i)
 			}
 			pauseTime := c.option.PauseTime[0] + randIn(c.option.pauseTimeDif)
 			time.Sleep(time.Duration(pauseTime) * time.Millisecond)
 		})
-		c.queuesLock = false
-		c.queues.Add(c.queuesTemp...)
-		c.queuesTemp = []interface{}{}
+		if c.queuesLock {
+			c.queues = queues
+		} else {
+			c.queuesTemp = queues
+		}
 	}
 }
 
 func (c *Crawler) loopStorer() {
 	for {
-		c.storersLock = true
+		if c.status < 0 {
+			break
+		} else if c.status == 0 {
+			continue
+		}
+		c.storersLock = !c.storersLock
 		c.RLock()
-		results := c.option.StorerWork(c.storers)
+		storers := c.storersTemp
+		if c.storersLock {
+			storers = c.storers
+		}
+		results := c.option.StorerWork(storers)
 		c.RUnlock()
-		c.Lock()
 		for name, success := range results {
 			if success {
-				c.storers[name] = []interface{}{}
+				storers[name] = []interface{}{}
 			}
 		}
-		c.storersLock = false
-		for name, datas := range c.storersTemp {
-			if len(datas) > 0 {
-				c.storers[name] = append(c.storers[name], datas...)
-			}
+		c.Lock()
+		if c.storersLock {
+			c.storers = storers
+		} else {
+			c.storersTemp = storers
 		}
-		c.storersTemp = make(map[string][]interface{})
 		c.Unlock()
 	}
 }
